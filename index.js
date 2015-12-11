@@ -304,7 +304,7 @@ module.exports = function (userConfig, grunt) {
      * @param {object} current request response object
      * @param {object} current request forward to next
      */
-    this.getConnectMiddleware = function (request, response, next) {
+    this.connectMiddelware = function (request, response, next) {
 
         var shouldGenieHandleTheRequest = (request.url.indexOf(config.serverDocumentRoot) === 0),
             currentRequestContext,
