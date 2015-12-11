@@ -1,0 +1,5 @@
+{
+    "preset": "crockford",
+    "disallowDanglingUnderscores": null,
+    "validateIndentation": null
+}

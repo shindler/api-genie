@@ -1,0 +1,33 @@
+{
+    "node": true,
+    "browser": true,
+    "esnext": true,
+    "bitwise": false,
+    "eqeqeq": true,
+    "eqnull": true,
+    "immed": true,
+    "latedef": true,
+    "newcap": true,
+    "noarg": true,
+    "undef": true,
+    "strict": true,
+    "trailing": false,
+    "smarttabs": false,
+
+    "jquery": true,
+
+    "indent": 4,
+    "quotmark": "single",
+    "unused": true,
+    "curly": true,
+    "noempty": true,
+
+    "maxlen": 200,
+    "maxcomplexity": 10,
+    "maxstatements": 10,
+    "maxdepth": 3,
+
+    "globals": {
+        "angular": true
+    }
+}
