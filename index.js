@@ -304,90 +304,93 @@ module.exports = function (userConfig, grunt) {
      * @param {object} current request response object
      * @param {object} current request forward to next
      */
-    this.connectMiddelware = function (request, response, next) {
+    this.getConnectMiddelware = function () {
+        return function (request, response, next) {
 
-        var shouldGenieHandleTheRequest = (request.url.indexOf(config.serverDocumentRoot) === 0),
-            currentRequestContext,
-            findAndExecuteAppropriateApproach,
-            originalResponseEnd = response.end;
+            var shouldGenieHandleTheRequest = (request.url.indexOf(config.serverDocumentRoot) === 0),
+                currentRequestContext,
+                findAndExecuteAppropriateApproach,
+                originalResponseEnd = response.end;
 
-        if (!shouldGenieHandleTheRequest) {
-            grunt.verbose.warn(request.method + ' ' + request.url + ' (forwarding)');
-            next();
-            return;
-        }
-
-       grunt.verbose.writeln('Going to handle: ' + request.method + ' ' + request.url);
-
-        if (request.headers.hasOwnProperty(config.methodOverwriteHeader)) {
-           request.method = request.headers[config.methodOverwriteHeader];
-        }
-
-        response.end = function () {
-            grunt.verbose.ok(request.method + ' ' + request.url + ' with ' + this.statusCode);
-            originalResponseEnd.apply(response, arguments);
-        };
-
-        currentRequestContext = {
-            requestSubset: apiGenie.identifyAndExtractSubsetForResponses(request),
-            requestSubsetShouldFallback: apiGenie.checkIfShouldFallbackToGlobals(request),
-            request: request,
-            response: response,
-            next: next
-        };
-
-        /**
-         * Find and execute appropriate approach to handle the request
-         */
-        findAndExecuteAppropriateApproach = function () {
-
-            var subsetRootPath = config.pathTemplate({
-                    root: config.mocksLocalRootPath,
-                    subset: currentRequestContext.requestSubset,
-                    resource: ''
-                }),
-
-                handleWithSubsetUsed = function (subsetExists) {
-
-                    if (subsetExists) {
-
-                        apiGenie.tryToHandleUsingSubset(currentRequestContext);
-
-                    } else if (subsetExists === false && currentRequestContext.requestSubsetShouldFallback) {
-
-                        apiGenie.tryToHandleUsingGlobals(currentRequestContext);
-
-                    } else if (subsetExists === false && !currentRequestContext.requestSubsetShouldFallback) {
-
-                        next();
-                        return;
-
-                    }
-                };
-
-            if (currentRequestContext.requestSubset) {
-
-                if (apiGenie.cache.hasOwnProperty(subsetRootPath) === false) {
-
-                    fs.exists(subsetRootPath, function (subsetExists) {
-
-                        if (config.cacheEnabled) {
-                            (apiGenie.cache[subsetRootPath] = subsetExists);
-                        }
-
-                        handleWithSubsetUsed.call(currentRequestContext, subsetExists);
-
-                    }.bind(this));
-
-                } else {
-                    handleWithSubsetUsed.call(currentRequestContext, apiGenie.cache[subsetRootPath]);
-                }
-            } else {
-                apiGenie.tryToHandleUsingGlobals(currentRequestContext);
+            if (!shouldGenieHandleTheRequest) {
+                grunt.verbose.warn(request.method + ' ' + request.url + ' (forwarding)');
+                next();
+                return;
             }
 
+           grunt.verbose.writeln('Going to handle: ' + request.method + ' ' + request.url);
+
+            if (request.headers.hasOwnProperty(config.methodOverwriteHeader)) {
+               request.method = request.headers[config.methodOverwriteHeader];
+            }
+
+            response.end = function () {
+                grunt.verbose.ok(request.method + ' ' + request.url + ' with ' + this.statusCode);
+                originalResponseEnd.apply(response, arguments);
+            };
+
+            currentRequestContext = {
+                requestSubset: apiGenie.identifyAndExtractSubsetForResponses(request),
+                requestSubsetShouldFallback: apiGenie.checkIfShouldFallbackToGlobals(request),
+                request: request,
+                response: response,
+                next: next
+            };
+
+            /**
+             * Find and execute appropriate approach to handle the request
+             */
+            findAndExecuteAppropriateApproach = function () {
+
+                var subsetRootPath = config.pathTemplate({
+                        root: config.mocksLocalRootPath,
+                        subset: currentRequestContext.requestSubset,
+                        resource: ''
+                    }),
+
+                    handleWithSubsetUsed = function (subsetExists) {
+
+                        if (subsetExists) {
+
+                            apiGenie.tryToHandleUsingSubset(currentRequestContext);
+
+                        } else if (subsetExists === false && currentRequestContext.requestSubsetShouldFallback) {
+
+                            apiGenie.tryToHandleUsingGlobals(currentRequestContext);
+
+                        } else if (subsetExists === false && !currentRequestContext.requestSubsetShouldFallback) {
+
+                            next();
+                            return;
+
+                        }
+                    };
+
+                if (currentRequestContext.requestSubset) {
+
+                    if (apiGenie.cache.hasOwnProperty(subsetRootPath) === false) {
+
+                        fs.exists(subsetRootPath, function (subsetExists) {
+
+                            if (config.cacheEnabled) {
+                                (apiGenie.cache[subsetRootPath] = subsetExists);
+                            }
+
+                            handleWithSubsetUsed.call(currentRequestContext, subsetExists);
+
+                        }.bind(this));
+
+                    } else {
+                        handleWithSubsetUsed.call(currentRequestContext, apiGenie.cache[subsetRootPath]);
+                    }
+                } else {
+                    apiGenie.tryToHandleUsingGlobals(currentRequestContext);
+                }
+
+            };
+
+            findAndExecuteAppropriateApproach();
         };
 
-        findAndExecuteAppropriateApproach();
     };
 };
