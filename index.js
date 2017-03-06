@@ -114,8 +114,12 @@ module.exports = function (userConfig, grunt) {
             resourceURLPathname = resourceURLParsed.pathname.replace(config.serverDocumentRootRegExp, ''),
 
             handleUsingNodeModule = function (path) {
-                var nodeModulePath = path.replace(/\.js$/, '');
-                return require([process.cwd(), nodeModulePath].join('/'));
+                var nodeModulePath = path.replace(/\.js$/, ''),
+                    nodeModuleToLoad = [process.cwd(), nodeModulePath].join('/');
+                
+                delete require.cache[require.resolve(nodeModuleToLoad)];
+                
+                return require(nodeModuleToLoad);
             },
 
             handleUsingSubsetResourceBasedOnUsedHTTPMethodWithStatic = function () {
