@@ -1,6 +1,6 @@
 {
   "name": "api-genie",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Static and dynamic mocking library for usage with express.js and Grunt",
   "main": "index.js",
   "scripts": {
