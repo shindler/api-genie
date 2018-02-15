@@ -1,85 +1,241 @@
 /* jshint maxstatements:false */
 var fs = require('fs'),
+    path = require('path'),
     urlParser = require('url'),
-    _ = require('lodash');
+    _ = require('lodash'),
+    chalk = require('chalk'),
+    util = require('util'),
+
+    defaultConfig = {
+
+        mocksMap: [
+            {
+                testRegExp: /^\/api/i,
+                mocksRootPath: 'mocks/api'
+            }
+        ],
+
+        // Header name triggering a subset
+        subsetTriggeringHeader: 'x-apigenie-subset',
+        // RegExp to test the subsetTriggeringHeader if it's a valid subset
+        subsetTriggeringHeaderValueRegExp: /^(CASE\-([a-z0-9_]+))$/,
+
+        // Header name which is enabled/disable fallback to globals
+        subsetFallbackModeHeader: 'x-apigenie-subset-fallback',
+        // Default status of fallback
+        subsetFallbackToGlobals: true,
+
+        // Header name which value will be used to overwrite used HTTP method
+        methodOverwriteHeader: 'x-http-method-override',
+
+        // Dynamic mock file name it
+        mockIndexFilename: 'index.js',
+        mockDirectoryIndexFilename: 'directory.js',
+
+        // Force usage of given subset (enforce fallback to globals)
+        forcedSubset: null,
+
+        // Function / LoDash template (default) that will help to generate the path to a mock
+        pathTemplate: '<%= root %><% if(subset) { %>_subsets/<%= subset %>/<% } %><%= resource %>',
+
+        // Be verbose with messages
+        beVerbose: false
+    },
+
+    _registry = {},
+
+    registry = {
+        get: function (inRegistryPath) {
+            return _.get(_registry, inRegistryPath);
+        },
+        set: function (inRegistryPath, value) {
+            return _.set(_registry, inRegistryPath, value);
+        }
+    };
+
 
 /**
  * API Genie
  *
  * @param {object} userConfig which will be merged with defaults
- * @param {object} grunt instance
  */
-module.exports = function (userConfig, grunt) {
+module.exports = function (userConfig) {
 
     'use strict';
 
     var apiGenie = this,
 
-        defaultConfig = {
-            // The document root of where the API endpoint resides
-            serverDocumentRoot: '/api',
-            // RegExp used to replace serverDocumentRoot from request url to get a clean path
-            serverDocumentRootRegExp: /^\/api/i,
-            // Path to mocks
-            mocksLocalRootPath: 'mocks/api',
+        runtimeConfig = generateRuntimeConfiguration(defaultConfig, userConfig);
 
-            // Header name triggering a subset
-            subsetTriggeringHeader: 'x-apigenie-subset',
-            // RegExp to test the subsetTriggeringHeader if it's a valid subset
-            subsetTriggeringHeaderValueRegExp: /^(CASE\-([a-z0-9_]+))$/,
+    return getMiddleware();
 
-            // Header name which is enabled/disable fallback to globals
-            subsetFallbackModeHeader: 'x-apigenie-subset-fallback',
-            // Default status of fallback
-            subsetFallbackToGlobals: true,
+    function generateRuntimeConfiguration() {
 
-            // Header name which value will be used to overwrite used HTTP method
-            methodOverwriteHeader: 'x-http-method-override',
+        var args = Array.from(arguments),
+            runtimeConf = Object.assign({}, ...args);
 
-            // Dynamic mock file name it
-            mockIndexFilename: 'index.js',
+        runtimeConf.beVerbose && console.log(chalk.blue('API Genie has been summoned to existence!'));
 
-            // Force usage of given subset
-            forcedSubset: null,
+        runtimeConf.pathTemplate = _.template(runtimeConf.pathTemplate);
 
-            // Static mocks cache
-            cacheEnabled: false,
-
-            // Function / LoDash template (default) that will help to generate the path to a mock
-            pathTemplate: _.template('<%= root %><% if(subset) { %>/_subsets/<%= subset %><% } %><%= resource %>'),
-
-            //List of glob patterns to find all static/dynamic mock files mocksLocalRootPath
-            globPatternsForMocks: [
-                '/**/*.js',
-                '/**/*.json'
-            ]
-        },
-
-        config = _.assign({}, defaultConfig, userConfig),
-
-        mocksFound = config.cacheEnabled && grunt.file.expand({ cwd: config.mocksLocalRootPath }, config.globPatternsForMocks);
-
-    this.cache = config.cacheEnabled ? (_.zipObject(mocksFound, _.map(_.range(1, mocksFound.length + 1), _.identity.bind(null, true))) || {}) : {};
+        return runtimeConf;
+    }
 
     /**
-     * Identifies and extracts subset for responses
+     * Get middleware compatibile with connect.js
+     */
+    function getMiddleware() {
+
+        return connectCompatibleMiddleware;
+        /**
+         * @param {object} current request object
+         * @param {object} current request response object
+         * @param {object} current request forward to next
+         */
+        function connectCompatibleMiddleware(request, response, next) {
+
+            var mockEntry = getMockEntry(),
+
+                currentRequestContext;
+
+            // Check if this request should be at all handled by Genie based on path
+            if (!mockEntry) {
+                next();
+                return;
+            } else {
+                runtimeConfig.beVerbose && console.log(chalk.gray(request.method + ' ' + request.url + ' | ') + 'Genie will try to handle this request for you');
+            }
+
+            substituteMethodIfRequired();
+            patchWhatNeeded();
+            generateCurrentRequestContext();
+            findAndExecuteAppropriateApproach();
+
+            function getMockEntry() {
+                return runtimeConfig.mocksMap.find((mockEntry) => {
+                    return request.url.match(mockEntry.testRegExp) !== null;
+                });
+            }
+
+            function substituteMethodIfRequired() {
+                if (request.headers.hasOwnProperty(runtimeConfig.methodOverwriteHeader)) {
+                    request.method = request.headers[methodOverwriteHeader];
+                }
+            }
+
+            function patchWhatNeeded() {
+
+                var originalResponseEnd = response.end,
+                    originalNext = next;
+
+                response.end = function () {
+                    var withoutError = this.statusCode >= 200 && this.statusCode < 400;
+
+                    console.log(chalk.gray(request.method + ' ' + request.url + ' | ') + chalk[withoutError ? 'green' : 'red']('Genie is done. Status code: ' + this.statusCode));
+
+                    originalResponseEnd.apply(response, arguments);
+                };
+
+                next = function () {
+                    response.end = originalResponseEnd;
+                    originalNext();
+                };
+            }
+
+            function generateCurrentRequestContext() {
+                // Generate current context data
+                currentRequestContext = {
+                    mockEntry: mockEntry,
+                    requestSubset: getSubsetFromRequest(request),
+                    requestSubsetShouldFallback: checkIfShouldFallbackToGlobals(request),
+                    request: request,
+                    response: response,
+                    next: next,
+                    registry: registry
+                };
+            }
+
+            function findAndExecuteAppropriateApproach() {
+
+                var subsetRootPath = runtimeConfig.pathTemplate({
+                        root: currentRequestContext.mockEntry.mocksRootPath,
+                        subset: currentRequestContext.requestSubset,
+                        resource: ''
+                    });
+
+                if (currentRequestContext.requestSubset) {
+
+                    runtimeConfig.beVerbose && console.log(
+                        chalk.gray(currentRequestContext.request.method + ' ' + currentRequestContext.request.url + ' | ') +
+                        'Genie will check if requested subset ' + currentRequestContext.requestSubset + ' exists'
+                    );
+
+                    fs.exists(subsetRootPath, (subsetExists) => {
+
+                        if (subsetExists) {
+
+                            tryToHandleUsingSubset(currentRequestContext);
+
+                        } else if (subsetExists === false && currentRequestContext.requestSubsetShouldFallback) {
+
+                            runtimeConfig.beVerbose && console.log(
+                                chalk.gray(currentRequestContext.request.method + ' ' + currentRequestContext.request.url + ' | ') +
+                                chalk.yellow('Genie was unable to find requested subset: ' + currentRequestContext.requestSubset + '. Falling back as requested to globals')
+                            );
+
+                            tryToHandleUsingGlobals(currentRequestContext);
+
+                        } else if (subsetExists === false && !currentRequestContext.requestSubsetShouldFallback) {
+
+                            runtimeConfig.beVerbose && console.log(
+                                chalk.gray(currentRequestContext.request.method + ' ' + currentRequestContext.request.url + ' | ') +
+                                chalk.yellow('Genie was unable to find requested subset: ' + currentRequestContext.requestSubset + '. No fallback as requested!')
+                            );
+
+                            fail(currentRequestContext);
+                            return;
+                        }
+                    });
+
+                } else {
+
+                    tryToHandleUsingGlobals(currentRequestContext);
+                }
+
+            }
+
+        };
+    };
+
+
+    function fail(currentRequestContext) {
+        currentRequestContext.response.writeHead(404);
+        currentRequestContext.response.end('404 | No matching mock file was found');
+    }
+
+    /**
+     * Guess the subset
      *
      * @param {object} current request object (provided by connect.js)
      * @return subset identifier
      */
-    this.identifyAndExtractSubsetForResponses = function (request) {
+    function getSubsetFromRequest(request) {
 
         var requestHeaders = request.headers,
-            subsetTriggeringHeader = config.subsetTriggeringHeader.toLowerCase();
 
-        if (config.forcedSubset) {
-            return config.forcedSubset;
-        } else if (requestHeaders.hasOwnProperty(subsetTriggeringHeader) && requestHeaders[subsetTriggeringHeader].match(config.subsetTriggeringHeaderValueRegExp)) {
+            subsetTriggeringHeader = runtimeConfig.subsetTriggeringHeader.toLowerCase(),
+
+            isSubsetForced = !!runtimeConfig.forcedSubset,
+            isSubsetDefinedByHeader = requestHeaders.hasOwnProperty(subsetTriggeringHeader) && !!requestHeaders[subsetTriggeringHeader].match(runtimeConfig.subsetTriggeringHeaderValueRegExp)
+
+        if (isSubsetForced) {
+            return runtimeConfig.forcedSubset;
+        } else if (isSubsetDefinedByHeader) {
             return requestHeaders[subsetTriggeringHeader];
-        } else {
-            return '';
         }
-    };
+
+        return '';
+    }
 
     /**
      * Checks if fallback to global mode is on or off
@@ -87,314 +243,229 @@ module.exports = function (userConfig, grunt) {
      * @param {object} current request object (provided by connect.js)
      * @return {bool} state
      */
-    this.checkIfShouldFallbackToGlobals = function (request) {
+    function checkIfShouldFallbackToGlobals(request) {
 
         var requestHeaders = request.headers,
-            subsetFallbackModeHeader = config.subsetFallbackModeHeader;
+            subsetFallbackModeHeader = runtimeConfig.subsetFallbackModeHeader,
 
-        if (config.forcedSubset) {
+            isSubsetForced = !!runtimeConfig.forcedSubset,
+            isFallbackBlockedByHeader = requestHeaders.hasOwnProperty(subsetFallbackModeHeader) && requestHeaders[subsetFallbackModeHeader] === 'false'
+
+        if (isSubsetForced) {
             return true;
-        } else if (requestHeaders.hasOwnProperty(subsetFallbackModeHeader) && requestHeaders[subsetFallbackModeHeader] === false) {
+        } else if (isFallbackBlockedByHeader) {
             return false;
-        } else {
-            return config.subsetFallbackToGlobals;
         }
-    };
+
+        return runtimeConfig.subsetFallbackToGlobals;
+    }
 
     /**
      * Setup a list of possible handlers for the request
      *
      * @param {object} current request object provided originally by connect.js
-     * @param {string} path to mock
      * @return {array} array of possible handlers
      */
-    this.setupAndGetPossibleHandlers = function (currentRequestContext, subset) {
+    function getRequestHandlers(currentRequestContext, subset) {
 
         var resourceURLParsed = urlParser.parse(currentRequestContext.request.url),
-            resourceURLPathname = resourceURLParsed.pathname.replace(config.serverDocumentRootRegExp, ''),
-
-            handleUsingNodeModule = function (path) {
-                var nodeModulePath = path.replace(/\.js$/, ''),
-                    nodeModuleToLoad = [process.cwd(), nodeModulePath].join('/');
-                
-                delete require.cache[require.resolve(nodeModuleToLoad)];
-                
-                return require(nodeModuleToLoad);
-            },
-
-            handleUsingSubsetResourceBasedOnUsedHTTPMethodWithStatic = function () {
-                return {
-                    willHandle: _.identity.bind(_, true),
-                    execute: apiGenie.handleUsingStaticFile
-                };
-            },
+            resourceURLPathname = resourceURLParsed.pathname.replace(currentRequestContext.mockEntry.testRegExp, ''),
 
             possibleHandlers = [
-                /** First index.js in subset folder... */
-                [
-                    config.pathTemplate({
-                        root: config.mocksLocalRootPath,
+                /** First look for index.js in top most folder... */
+                {
+                    fileLocation: runtimeConfig.pathTemplate({
+                        root: currentRequestContext.mockEntry.mocksRootPath,
                         subset: subset || null,
-                        resource: '/' + config.mockIndexFilename
+                        resource: runtimeConfig.mockIndexFilename
                     }),
-                    handleUsingNodeModule
-                ],
-                /** ...then check if index.js node module in folder */
-                [
-                    config.pathTemplate({
-                        root: config.mocksLocalRootPath,
+                    factory: handleRequestUsingNodeModule,
+                    whoAmI: function () {
+                        runtimeConfig.beVerbose && console.log(
+                            chalk.gray(currentRequestContext.request.method + ' ' + currentRequestContext.request.url + ' | ') +
+                            'Genie is trying to use dynamic mock: a index.js in top most folder for given entrypoint(' + this.fileLocation + ')'
+                        );
+                    }
+                },
+                /** ...then look for index.js in folder */
+                {
+                    fileLocation: runtimeConfig.pathTemplate({
+                        root: currentRequestContext.mockEntry.mocksRootPath,
                         subset: subset || null,
-                        resource: resourceURLPathname + '/' + config.mockIndexFilename
+                        resource: path.normalize((resourceURLPathname || '.') + '/' + runtimeConfig.mockIndexFilename)
                     }),
-                    handleUsingNodeModule
-                ],
-                /** ...then handle using method.js file... */
-                [
-                    config.pathTemplate({
-                        root: config.mocksLocalRootPath,
+                    factory: handleRequestUsingNodeModule,
+                    whoAmI: function () {
+                        runtimeConfig.beVerbose && console.log(
+                            chalk.gray(currentRequestContext.request.method + ' ' + currentRequestContext.request.url + ' | ') +
+                            'Genie is trying to use dynamic mock: a index.js file from matching path (' + this.fileLocation + ')'
+                        );
+                    }
+                },
+                /** ...then look for .js file named after http method that is used ... */
+                {
+                    fileLocation: runtimeConfig.pathTemplate({
+                        root: currentRequestContext.mockEntry.mocksRootPath,
                         subset: subset || null,
-                        resource: resourceURLPathname + '/' + currentRequestContext.request.method + '.js'
+                        resource: path.normalize((resourceURLPathname || '.') + '/' + currentRequestContext.request.method + '.js')
                     }),
-                    handleUsingNodeModule
-                ],
-                /** ...then handle using JSON... */
-                [
-                    config.pathTemplate({
-                        root: config.mocksLocalRootPath,
+                    factory: handleRequestUsingNodeModule,
+                    whoAmI: function () {
+                        runtimeConfig.beVerbose && console.log(
+                            chalk.gray(currentRequestContext.request.method + ' ' + currentRequestContext.request.url + ' | ') +
+                            'Genie is trying to use dynamic mock: a JS file named after http method (' + this.fileLocation + ')'
+                        );
+                    }
+                },
+                /** ...then look for JSON file named after http method that is used ... */
+                {
+                    fileLocation: runtimeConfig.pathTemplate({
+                        root: currentRequestContext.mockEntry.mocksRootPath,
                         subset: subset || null,
-                        resource: resourceURLPathname + '/' + currentRequestContext.request.method + '.json'
+                        resource: path.normalize((resourceURLPathname || '.') + '/' + currentRequestContext.request.method + '.json')
                     }),
-                    handleUsingSubsetResourceBasedOnUsedHTTPMethodWithStatic
-                ]
+                    factory: handleRequestUsingStaticFile,
+                    whoAmI: function () {
+                        runtimeConfig.beVerbose && console.log(
+                            chalk.gray(currentRequestContext.request.method + ' ' + currentRequestContext.request.url + ' | ') +
+                            'Genie is trying to use static mock: a JSON file named after http method (' + this.fileLocation + ')'
+                        );
+                    }
+                }
             ];
 
         return possibleHandlers;
-    };
 
-    /**
-     * Main logic for handling the request with provided helpers
-     *
-     * @param {object} current request object provided originally by connect.js
-     * @param {string} path to mock
-     */
-    this.handleRequestUsing = function (possibleHandlers, currentRequestContext) {
 
-        var tryToHandle = function () {
+        function handleRequestUsingNodeModule(nodeModulePathToUse) {
 
-                var currentHandler = possibleHandlers.shift(),
+            var nodeModulePath = nodeModulePathToUse.replace(/\.js$/, ''),
+                nodeModuleToLoad = [process.cwd(), nodeModulePath].join('/');
 
-                    handle = function (handlerExists) {
+            if (require.cache[require.resolve(nodeModuleToLoad)]) {
+                cleanup();
+                delete require.cache[require.resolve(nodeModuleToLoad)];
+            }
 
-                        var handler;
+            return require(nodeModuleToLoad);
 
-                        if (handlerExists) {
+            function cleanup() {
+                var nodeModule = require(nodeModuleToLoad);
+                nodeModule.cleanup && nodeModule.cleanup();
+            }
+        }
 
-                            handler = currentHandler[1](currentHandler[0]);
-
-                            if (handler.willHandle.call(this, currentHandler[0], currentRequestContext)) {
-                                return handler.execute.call(this, currentHandler[0], currentRequestContext);
-                            }
-                        }
-
-                        tryToHandle();
-                    };
-
-                if (!currentHandler) {
-                    currentRequestContext.next();
-                    return;
-                }
-
-                if (apiGenie.cache.hasOwnProperty(currentHandler[0]) === false) {
-
-                    fs.exists(currentHandler[0], function (handlingModuleExists) {
-
-                        var handler;
-
-                        if (config.cacheEnabled) {
-                            (apiGenie.cache[currentHandler[0]] = handlingModuleExists);
-                        }
-
-                        if (handlingModuleExists) {
-
-                            handler = currentHandler[1](currentHandler[0]);
-
-                            if (handler.willHandle.call(this, currentHandler[0], currentRequestContext)) {
-                                return handler.execute.call(this, currentHandler[0], currentRequestContext);
-                            }
-                        }
-
-                        tryToHandle();
-
-                    }.bind(this));
-
-                } else {
-                    handle(apiGenie.cache[currentHandler[0]]);
-                }
+        function handleRequestUsingStaticFile() {
+            // return object that complies with handler interface expectations
+            return {
+                willHandle: _.identity.bind(_, true),
+                execute: handleUsingStaticFile
             };
 
-        tryToHandle();
-        return;
-    };
+            function handleUsingStaticFile(staticFilePath, currentRequestContext, options) {
+
+                fs.readFile(staticFilePath, function (err, buf) {
+                    var resp;
+
+                    if (err) {
+                        return currentRequestContext.next(err);
+                    }
+
+                    resp = {
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Content-Length': buf.length
+                        },
+                        body: buf
+                    };
+
+                    if (options && options.hasOwnProperty('headers')) {
+                        _.assign(resp.headers, options.headers);
+                    }
+
+                    currentRequestContext.response.writeHead((options && options.hasOwnProperty('statusCode')) ? options.statusCode : 200, resp.headers);
+                    currentRequestContext.response.end(resp.body);
+                });
+            };
+        }
+    }
 
     /**
      * Try to handle the request using only global handlers
      *
      * @param {object} current request object provided originally by connect.js
      */
-    this.tryToHandleUsingGlobals = function (currentRequestContext) {
+    function tryToHandleUsingGlobals(currentRequestContext) {
 
-        var possibleHandlers = this.setupAndGetPossibleHandlers(currentRequestContext, null);
+        var possibleHandlers = getRequestHandlers(currentRequestContext, null);
 
         currentRequestContext.requestSubsetShouldFallback = false;
 
-        this.handleRequestUsing(possibleHandlers, currentRequestContext);
-    };
+        runtimeConfig.beVerbose && console.log(chalk.gray(currentRequestContext.request.method + ' ' + currentRequestContext.request.url + ' | ') + 'Genie is trying with global mocks');
+
+        handleRequest(possibleHandlers, currentRequestContext);
+    }
 
     /**
      * Try to handle the request using subset and if-required global handlers
      *
      * @param {object} current request object provided originally by connect.js
      */
-    this.tryToHandleUsingSubset = function (currentRequestContext) {
+    function tryToHandleUsingSubset(currentRequestContext) {
 
-        var possibleHandlers = this.setupAndGetPossibleHandlers(currentRequestContext, currentRequestContext.requestSubset);
+        var possibleHandlers = getRequestHandlers(currentRequestContext, currentRequestContext.requestSubset);
 
         if (currentRequestContext.requestSubsetShouldFallback) {
             currentRequestContext.requestSubsetShouldFallback = false;
-            possibleHandlers = possibleHandlers.concat(this.setupAndGetPossibleHandlers(currentRequestContext, null));
+            possibleHandlers = possibleHandlers.concat(getRequestHandlers(currentRequestContext, null));
             currentRequestContext.requestSubsetShouldFallback = true;
         }
 
-        this.handleRequestUsing(possibleHandlers, currentRequestContext);
+        runtimeConfig.beVerbose && console.log(chalk.gray(currentRequestContext.request.method + ' ' + currentRequestContext.request.url + ' | ') + 'Genie is trying with a subset ' + currentRequestContext.requestSubset + ' of mocks ' + (currentRequestContext.requestSubsetShouldFallback ? 'with' : 'without') + ' fallback');
 
-    };
-
-    /**
-     * Handle current request using default handler
-     *
-     * @param {string} path to mock
-     * @param {object} current request object provided originally by connect.js
-     */
-    this.handleUsingStaticFile = function (path, currentRequestContext, options) {
-
-        fs.readFile(path, function (err, buf) {
-            var resp;
-
-            if (err) {
-                return currentRequestContext.next(err);
-            }
-
-            resp = {
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Content-Length': buf.length
-                },
-                body: buf
-            };
-
-            if (options && options.hasOwnProperty('headers')) {
-                _.assign(resp.headers, options.headers);
-            }
-
-            currentRequestContext.response.writeHead((options && options.hasOwnProperty('statusCode')) ? options.statusCode : 200, resp.headers);
-            currentRequestContext.response.end(resp.body);
-        });
-    };
+        handleRequest(possibleHandlers, currentRequestContext);
+    }
 
     /**
-     * CONNECT.js middleware definition
-     *
-     * @param {object} current request object
-     * @param {object} current request response object
-     * @param {object} current request forward to next
+     * Main logic for handling the request with provided helpers
      */
-    this.getConnectMiddelware = function () {
-        return function (request, response, next) {
+    function handleRequest(possibleHandlers, currentRequestContext) {
 
-            var shouldGenieHandleTheRequest = (request.url.indexOf(config.serverDocumentRoot) === 0),
-                currentRequestContext,
-                findAndExecuteAppropriateApproach,
-                originalResponseEnd = response.end;
+        // try to handle request
+        tryToHandle();
 
-            if (!shouldGenieHandleTheRequest) {
-                grunt.verbose.warn(request.method + ' ' + request.url + ' (forwarding)');
-                next();
+        return;
+
+        function tryToHandle() {
+
+            var currentHandler = possibleHandlers.shift();
+
+            if (!currentHandler) {
+                fail(currentRequestContext);
                 return;
             }
 
-           grunt.verbose.writeln('Going to handle: ' + request.method + ' ' + request.url);
+            currentHandler.whoAmI();
 
-            if (request.headers.hasOwnProperty(config.methodOverwriteHeader)) {
-               request.method = request.headers[config.methodOverwriteHeader];
-            }
+            fs.exists(currentHandler.fileLocation, (handlingModuleExists) => {
 
-            response.end = function () {
-                grunt.verbose.ok(request.method + ' ' + request.url + ' with ' + this.statusCode);
-                originalResponseEnd.apply(response, arguments);
-            };
+                var handler;
 
-            currentRequestContext = {
-                requestSubset: apiGenie.identifyAndExtractSubsetForResponses(request),
-                requestSubsetShouldFallback: apiGenie.checkIfShouldFallbackToGlobals(request),
-                request: request,
-                response: response,
-                next: next
-            };
+                if (handlingModuleExists) {
 
-            /**
-             * Find and execute appropriate approach to handle the request
-             */
-            findAndExecuteAppropriateApproach = function () {
+                    handler = currentHandler.factory(currentHandler.fileLocation);
 
-                var subsetRootPath = config.pathTemplate({
-                        root: config.mocksLocalRootPath,
-                        subset: currentRequestContext.requestSubset,
-                        resource: ''
-                    }),
-
-                    handleWithSubsetUsed = function (subsetExists) {
-
-                        if (subsetExists) {
-
-                            apiGenie.tryToHandleUsingSubset(currentRequestContext);
-
-                        } else if (subsetExists === false && currentRequestContext.requestSubsetShouldFallback) {
-
-                            apiGenie.tryToHandleUsingGlobals(currentRequestContext);
-
-                        } else if (subsetExists === false && !currentRequestContext.requestSubsetShouldFallback) {
-
-                            next();
-                            return;
-
-                        }
-                    };
-
-                if (currentRequestContext.requestSubset) {
-
-                    if (apiGenie.cache.hasOwnProperty(subsetRootPath) === false) {
-
-                        fs.exists(subsetRootPath, function (subsetExists) {
-
-                            if (config.cacheEnabled) {
-                                (apiGenie.cache[subsetRootPath] = subsetExists);
-                            }
-
-                            handleWithSubsetUsed.call(currentRequestContext, subsetExists);
-
-                        }.bind(this));
-
-                    } else {
-                        handleWithSubsetUsed.call(currentRequestContext, apiGenie.cache[subsetRootPath]);
+                    if (handler.willHandle(currentHandler.fileLocation, currentRequestContext)) {
+                        return handler.execute(currentHandler.fileLocation, currentRequestContext);
                     }
                 } else {
-                    apiGenie.tryToHandleUsingGlobals(currentRequestContext);
+
                 }
 
-            };
+                // try to handle the request with next possible handler
+                tryToHandle();
 
-            findAndExecuteAppropriateApproach();
-        };
-
-    };
+            });
+        }
+    }
 };

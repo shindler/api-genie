@@ -1,18 +1,16 @@
 {
   "name": "api-genie",
-  "version": "0.1.5",
-  "description": "Static and dynamic mocking library for usage with express.js and Grunt",
+  "version": "0.2.0",
+  "description": "Static and dynamic mocking library for usage with connect.js middleware's compatible solutions",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node dev/server"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/shindler/api-genie.git"
   },
   "keywords": [
-    "grunt",
-    "expressjs",
     "api-genie"
   ],
   "author": "Łukasz \"Max\" Kokoszka",
@@ -23,6 +21,10 @@
   "homepage": "https://github.com/shindler/api-genie#readme",
   "private": true,
   "dependencies": {
-    "lodash": "^3.10.1"
+    "chalk": "2.3.1",
+    "lodash": "3.10.1"
+  },
+  "devDependencies": {
+    "connect": "3.6.5"
   }
 }
