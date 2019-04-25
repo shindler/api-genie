@@ -14,7 +14,7 @@
     "api-genie"
   ],
   "author": "Łukasz \"Max\" Kokoszka",
-  "license": "ISC",
+  "license": "MIT",
   "bugs": {
     "url": "https://github.com/shindler/api-genie/issues"
   },
