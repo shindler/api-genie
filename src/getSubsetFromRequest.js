@@ -6,12 +6,14 @@
      */
 module.exports = function getSubsetFromRequest(request, runtimeConfig) {
 
-    var requestHeaders = request.headers,
+    const requestHeaders = request.headers;
+    const subsetTriggeringHeader = runtimeConfig.subsetTriggeringHeader.toLowerCase();
 
-        subsetTriggeringHeader = runtimeConfig.subsetTriggeringHeader.toLowerCase(),
-
-        isSubsetForced = !!runtimeConfig.forcedSubset,
-        isSubsetDefinedByHeader = requestHeaders.hasOwnProperty(subsetTriggeringHeader) && !!requestHeaders[subsetTriggeringHeader].match(runtimeConfig.subsetTriggeringHeaderValueRegExp)
+    const isSubsetForced = !!runtimeConfig.forcedSubset;
+    const isSubsetDefinedByHeader = (
+        requestHeaders.hasOwnProperty(subsetTriggeringHeader) &&
+        !!requestHeaders[subsetTriggeringHeader].match(runtimeConfig.subsetTriggeringHeaderValueRegExp)
+    );
 
     if (isSubsetForced) {
         return runtimeConfig.forcedSubset;

@@ -1,9 +1,6 @@
-const fs = require('fs');
 const path = require('path');
 
-const chalk = require('chalk').default;
-
-const asStaticFile = require('./../mockLoaders/asStaticFile');
+const storageDriver = require('./../mockStorageDrivers/fsDriver');
 
 function getMethodRelatedJsonHandler(runtimeConfig, resourceURLPathname, currentRequestContext, includeSubset) {
 
@@ -13,13 +10,12 @@ function getMethodRelatedJsonHandler(runtimeConfig, resourceURLPathname, current
         resource: path.normalize((resourceURLPathname || '.') + '/' + currentRequestContext.request.method + '.json')
     });
 
-    if (!fs.existsSync(fileLocation)) {
+    if (!storageDriver.pathExists(fileLocation)) {
         return [];
     }
 
     return [{
-        loader: asStaticFile(fileLocation),
-        file: fileLocation,
+        path: fileLocation,
         name: 'methodRelatedJsonHandler',
         nature: 'static'
     }];

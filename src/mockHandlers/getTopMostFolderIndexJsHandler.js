@@ -1,9 +1,7 @@
-const fs = require('fs');
 const path = require('path');
 
-const chalk = require('chalk').default;
 
-const asNodeModule = require('./../mockLoaders/asNodeModule');
+const storageDriver = require('./../mockStorageDrivers/fsDriver');
 
 function getTopMostFolderIndexJsHandler(runtimeConfig, resourceURLPathname, currentRequestContext, includeSubset) {
 
@@ -13,13 +11,12 @@ function getTopMostFolderIndexJsHandler(runtimeConfig, resourceURLPathname, curr
         resource: runtimeConfig.mockIndexFilename
     });
 
-    if (!fs.existsSync(fileLocation)) {
+    if (!storageDriver.pathExists(fileLocation)) {
         return [];
     }
 
     return [{
-        loader: asNodeModule(fileLocation),
-        file: fileLocation,
+        path: fileLocation,
         name: 'topMostFolderIndexJsHandler',
         nature: 'dynamic'
     }];

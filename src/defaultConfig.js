@@ -11,7 +11,7 @@ module.exports = {
     // Header name triggering a subset
     subsetTriggeringHeader: 'x-apigenie-subset',
     // RegExp to test the subsetTriggeringHeader if it's a valid subset
-    subsetTriggeringHeaderValueRegExp: /^(CASE\-([a-z0-9_]+))$/,
+    subsetTriggeringHeaderValueRegExp: /^.*$/,
 
     // Header name which is enabled/disable fallback to globals
     subsetFallbackModeHeader: 'x-apigenie-subset-fallback',

@@ -1,36 +1,45 @@
 const fs = require("fs");
-const chalk = require("chalk").default;
 const path = require("path");
+const chalk = require("chalk").default;
 
 const getRequestHandlers = require("./getRequestHandlers");
+const storageDriver = require("./mockStorageDrivers/fsDriver");
+const asStaticFile = require("./mockLoaders/asStaticFile");
+const asNodeModule = require("./mockLoaders/asNodeModule");
+const signalFailure = require("./signalFailure");
+
+module.exports.tryToHandleUsingGlobals = tryToHandleUsingGlobals;
+module.exports.tryToHandleUsingSubset = tryToHandleUsingSubset;
+
 /**
  * Try to handle the request using only global handlers
  *
- * @param {object} current request object provided originally by connect.js
+ * @param {object} runtimeConfig
+ * @param {object} currentRequestContext current request object provided originally by connect.js
  */
 function tryToHandleUsingGlobals(runtimeConfig, currentRequestContext) {
 
     const possibleHandlers = getRequestHandlers(runtimeConfig, currentRequestContext);
-    const context = currentRequestContext.request.method + ' ' + currentRequestContext.request.url;
 
     currentRequestContext.requestSubsetShouldFallback = false;
 
     runtimeConfig.beVerbose && console.log(
-        chalk.gray(context + ' | ') +
+        chalk.gray(currentRequestContext.context + ' | ') +
         'Genie is trying with global mocks'
     );
     runtimeConfig.beVerbose && console.log(
-        chalk.gray(context + ' | ') +
+        chalk.gray(currentRequestContext.context + ' | ') +
         'Genie found ' + possibleHandlers.length + ' handler(s) for this request...'
     );
 
-    handleRequest(runtimeConfig, possibleHandlers, currentRequestContext, context);
+    handleRequest(runtimeConfig, possibleHandlers, currentRequestContext);
 }
 
 /**
  * Try to handle the request using subset and if-required global handlers
  *
- * @param { object } current request object provided originally by connect.js
+ * @param {object} runtimeConfig
+ * @param {object} currentRequestContext current request object provided originally by connect.js
  */
 function tryToHandleUsingSubset(runtimeConfig, currentRequestContext) {
 
@@ -39,18 +48,17 @@ function tryToHandleUsingSubset(runtimeConfig, currentRequestContext) {
         subset: currentRequestContext.requestSubset,
         resource: ''
     });
-    const context = currentRequestContext.request.method + ' ' + currentRequestContext.request.url;
 
     runtimeConfig.beVerbose && console.log(
-        chalk.gray(context + ' | ') +
+        chalk.gray(currentRequestContext.context + ' | ') +
         'Genie will check if requested subset ' + currentRequestContext.requestSubset + ' exists'
     );
 
-    const subsetExists = fs.existsSync(subsetRootPath);
+    const subsetExists = storageDriver.pathExists(subsetRootPath);
 
     if (subsetExists) {
 
-        var possibleHandlers = getRequestHandlers(runtimeConfig, currentRequestContext, true);
+        const possibleHandlers = getRequestHandlers(runtimeConfig, currentRequestContext, true);
 
         if (currentRequestContext.requestSubsetShouldFallback) {
             currentRequestContext.requestSubsetShouldFallback = false;
@@ -59,21 +67,21 @@ function tryToHandleUsingSubset(runtimeConfig, currentRequestContext) {
         }
 
         runtimeConfig.beVerbose && console.log(
-            chalk.gray(context + ' | ') +
+            chalk.gray(currentRequestContext.context + ' | ') +
             'Genie is trying with a subset ' + currentRequestContext.requestSubset + ' of mocks ' + (currentRequestContext.requestSubsetShouldFallback ? 'with' : 'without') + ' fallback'
         );
 
         runtimeConfig.beVerbose && console.log(
-            chalk.gray(context + ' | ') +
+            chalk.gray(currentRequestContext.context + ' | ') +
             'Genie found ' + possibleHandlers.length + ' handler(s) for this request...'
         );
 
-        handleRequest(runtimeConfig, possibleHandlers, currentRequestContext, context);
+        handleRequest(runtimeConfig, possibleHandlers, currentRequestContext);
 
     } else if (subsetExists === false && currentRequestContext.requestSubsetShouldFallback) {
 
         runtimeConfig.beVerbose && console.log(
-            chalk.gray(context + ' | ') +
+            chalk.gray(currentRequestContext.context + ' | ') +
             chalk.yellow('Genie was unable to find requested subset: ' + currentRequestContext.requestSubset + '. Falling back as requested to globals')
         );
 
@@ -82,7 +90,7 @@ function tryToHandleUsingSubset(runtimeConfig, currentRequestContext) {
     } else if (subsetExists === false && !currentRequestContext.requestSubsetShouldFallback) {
 
         runtimeConfig.beVerbose && console.log(
-            chalk.gray(context + ' | ') +
+            chalk.gray(currentRequestContext.context + ' | ') +
             chalk.yellow('Genie was unable to find requested subset: ' + currentRequestContext.requestSubset + '. No fallback as requested!')
         );
 
@@ -92,11 +100,11 @@ function tryToHandleUsingSubset(runtimeConfig, currentRequestContext) {
 }
 
 
-function handleRequest(runtimeConfig, possibleHandlers, currentRequestContext, context) {
+function handleRequest(runtimeConfig, possibleHandlers, currentRequestContext) {
 
     if (possibleHandlers.length === 0) {
         runtimeConfig.beVerbose && console.log(
-            chalk.gray(context + ' | ') +
+            chalk.gray(currentRequestContext.context + ' | ') +
             chalk.yellow('Genie didn\'t found handlers... forwarding')
         );
 
@@ -106,13 +114,14 @@ function handleRequest(runtimeConfig, possibleHandlers, currentRequestContext, c
     }
 
     let currentHandler;
+    let mock;
 
     while (!!(currentHandler = possibleHandlers.shift())) {
 
         runtimeConfig.beVerbose && console.log(
-            chalk.gray(context + ' | ') +
+            chalk.gray(currentRequestContext.context + ' | ') +
             chalk.yellow(`${currentHandler.name} `) +
-            `will try to use a ${currentHandler.nature} mock at ${currentHandler.file}`
+            `will try to use a ${currentHandler.nature} mock at ${currentHandler.path}`
         );
 
         if (currentHandler.hasOwnProperty('pathParams') || currentHandler.hasOwnProperty('pathParamsMap')) {
@@ -120,19 +129,36 @@ function handleRequest(runtimeConfig, possibleHandlers, currentRequestContext, c
             currentRequestContext.pathParams.map = currentHandler.pathParamsMap
         }
 
-        let mock = currentHandler.loader.load(currentHandler.fileLocation);
+        switch (currentHandler.nature) {
+            case 'static':
+                mock = asStaticFile(currentHandler.path).load();
+                break;
+            case 'dynamic':
+                mock = asNodeModule(currentHandler.path).load();
+                break;
+        }
+
+        if (!mock) {
+            signalFailure(500, `500 | Couldn\'t load ${currentHandler.path}`)
+            return;
+        }
 
         if (mock.willHandle(currentRequestContext)) {
             runtimeConfig.beVerbose && console.log(
-                chalk.gray(context + ' | ') +
+                chalk.gray(currentRequestContext.context + ' | ') +
                 chalk.yellow(`${currentHandler.name} `) +
                 'got a reply from the mock it is willing to respond... executing'
+            );
+
+            currentRequestContext.response.setHeader(
+                'x-apigenie-mock-used',
+                path.relative('.', currentHandler.path).replace(runtimeConfig.mocksRootPath, '')
             );
 
             return mock.execute(currentHandler.fileLocation, currentRequestContext);
         } else {
             runtimeConfig.beVerbose && console.log(
-                chalk.gray(context + ' | ') +
+                chalk.gray(currentRequestContext.context + ' | ') +
                 chalk.yellow(`${currentHandler.name} `) +
                 'got a reply from mock that it will not handle this request... forwarding to next handler'
             );
@@ -143,20 +169,14 @@ function handleRequest(runtimeConfig, possibleHandlers, currentRequestContext, c
 
     if (!currentHandler) {
         runtimeConfig.beVerbose && console.log(
-            chalk.gray(context + ' | ') +
+            chalk.gray(currentRequestContext.context + ' | ') +
             chalk.yellow('Genie didn\'t found any more handlers... signaling failure')
         );
+
         signalFailure(currentRequestContext);
+
         return;
     }
 }
 
-function signalFailure(currentRequestContext, msg = '404 | No matching mock file was found') {
-    currentRequestContext.response.writeHead(404);
-    currentRequestContext.response.end(msg);
-}
 
-
-module.exports.tryToHandleUsingGlobals = tryToHandleUsingGlobals;
-module.exports.tryToHandleUsingSubset = tryToHandleUsingSubset;
-module.exports.signalFailure = signalFailure;

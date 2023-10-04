@@ -18,8 +18,6 @@ const getDynamicSegmentsHandlers = require('./mockHandlers/getDynamicSegmentsHan
      */
 module.exports = function getRequestHandlers(runtimeConfig, currentRequestContext, includeSubset = false) {
 
-    const context = currentRequestContext.request.method + ' ' + currentRequestContext.request.url;
-
     const resourceURLParsed = urlParser.parse(currentRequestContext.request.url);
     const resourceURLPathname = resourceURLParsed['pathname'] ? resourceURLParsed.pathname.replace(currentRequestContext.mockEntry.testRegExp, '') : '';
     const resourceURLWithinPath = currentRequestContext.request.url.split(currentRequestContext.mockEntry.path)[1];

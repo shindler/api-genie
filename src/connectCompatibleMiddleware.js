@@ -1,10 +1,9 @@
-var chalk = require('chalk').default;
-var path = require('path');
-var fs = require('fs');
+const url = require('url');
+const chalk = require('chalk').default;
 
-var getSubsetFromRequest = require('./getSubsetFromRequest');
-var checkIfShouldFallbackToGlobals = require('./checkIfShouldFallbackToGlobals');
-var registry = require('./registry');
+const getSubsetFromRequest = require('./getSubsetFromRequest');
+const checkIfShouldFallbackToGlobals = require('./checkIfShouldFallbackToGlobals');
+const registry = require('./registry');
 const { tryToHandleUsingSubset, tryToHandleUsingGlobals } = require('./tryToHandle');
 
 function getMockEntry(runtimeConfig, request) {
@@ -16,26 +15,28 @@ function getMockEntry(runtimeConfig, request) {
 function substituteMethodIfRequired(runtimeConfig, request) {
     if (request.headers.hasOwnProperty(runtimeConfig.methodOverwriteHeader)) {
         const originalRequestMethod = request.method;
+        const context = request.method + ' ' + url.parse(request.url).pathname;
 
         request.method = request.headers[runtimeConfig.methodOverwriteHeader];
 
         runtimeConfig.beVerbose && console.log(
-            chalk.gray(originalRequestMethod + ' > ' + request.method + ' ' + request.url + ' | ') +
+            chalk.gray(originalRequestMethod + ' > ' + context + ' | ') +
             chalk.magenta('Genie substituted HTTP method from ' + originalRequestMethod + ' to ' + request.method + ' as requested via ' + runtimeConfig.methodOverwriteHeader)
         );
     }
 }
 
-function patchConnectContext(request, response, next) {
+function patchConnectContext(runtimeConfig, request, response, next) {
 
-    var originalResponseEnd = response.end,
-        originalNext = next;
+    const originalResponseEnd = response.end;
+    const originalNext = next;
+    const context = request.method + ' ' + url.parse(request.url).pathname;
 
     response.end = function () {
-        var withoutError = this.statusCode >= 200 && this.statusCode < 400;
+        const withoutError = this.statusCode >= 200 && this.statusCode < 400;
 
-        console.log(
-            chalk.gray(request.method + ' ' + request.url + ' | ') +
+        runtimeConfig.beVerbose && console.log(
+            chalk.gray(context + ' | ') +
             chalk[withoutError ? 'green' : 'red']('Genie is done. Status code: ' + this.statusCode)
         );
 
@@ -49,12 +50,19 @@ function patchConnectContext(request, response, next) {
 }
 
 function generateCurrentRequestContext(mockEntry, runtimeConfig, request, response, next) {
+    const urlParts = url.parse(request.url, true);
     // Generate current context data
     return {
+        context: request.method + ' ' + url.parse(request.url).pathname,
         mockEntry: mockEntry,
         requestSubset: getSubsetFromRequest(request, runtimeConfig),
         requestSubsetShouldFallback: checkIfShouldFallbackToGlobals(request, runtimeConfig),
-        request: request,
+        request: {
+            ...request,
+            query: {
+                ...urlParts.query
+            }
+        },
         response: response,
         next: next,
         registry: registry,
@@ -70,8 +78,9 @@ module.exports = function (runtimeConfig) {
     return function connectCompatibleMiddleware(request, response, next) {
 
         const mockEntry = getMockEntry(runtimeConfig, request);
+        const context = request.method + ' ' + url.parse(request.url).pathname
 
-        console.group(request.method + ' ' + request.url);
+        runtimeConfig.beVerbose && console.group(context);
 
         // Check if this request should be at all handled by Genie based on path
         if (!mockEntry) {
@@ -79,13 +88,13 @@ module.exports = function (runtimeConfig) {
             return;
         } else {
             runtimeConfig.beVerbose && console.log(
-                chalk.gray(request.method + ' ' + request.url + ' | ') +
+                chalk.gray(context + ' | ') +
                 'Genie will try to handle this request for you'
             );
         }
 
         substituteMethodIfRequired(runtimeConfig, request);
-        patchConnectContext(request, response, next);
+        patchConnectContext(runtimeConfig, request, response, next);
 
         const currentRequestContext = generateCurrentRequestContext(mockEntry, runtimeConfig, request, response, next);
 
@@ -94,7 +103,7 @@ module.exports = function (runtimeConfig) {
             tryToHandleUsingSubset(runtimeConfig, currentRequestContext) :
             tryToHandleUsingGlobals(runtimeConfig, currentRequestContext);
 
-        console.groupEnd();
+        runtimeConfig.beVerbose && console.groupEnd();
     }
 
 };

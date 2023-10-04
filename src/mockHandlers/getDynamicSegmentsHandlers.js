@@ -1,10 +1,6 @@
-const fs = require('fs');
 const path = require('path');
 
-const chalk = require('chalk').default;
-
-const asNodeModule = require('../mockLoaders/asNodeModule');
-const asStaticFile = require('../mockLoaders/asStaticFile');
+const storageDriver = require('./../mockStorageDrivers/fsDriver');
 
 function getDynamicSegmentsHandlers(runtimeConfig, resourceURLWithinPath, currentRequestContext, includeSubset = false) {
     let [...segments] = resourceURLWithinPath.split('/');
@@ -32,14 +28,14 @@ function getDynamicSegmentsHandlers(runtimeConfig, resourceURLWithinPath, curren
             resource: path.join(effectivePath, '%any')
         }));
 
-        const segmentIsExactMatch = fs.existsSync(currentSegmentPath + '/');
-        const segmentIsDynamicMatch = fs.existsSync(currentSegmentPathWithAny + '/');
+        const segmentIsExactMatch = storageDriver.pathExists(currentSegmentPath + '/');
+        const segmentIsDynamicMatch = storageDriver.pathExists(currentSegmentPathWithAny + '/');
 
         if (segmentIsDynamicMatch) {
             const paramIndex = pathParams.length;
             const paramName = (
-                fs.existsSync(currentSegmentPathWithAny + '/_PARAM') &&
-                fs.readFileSync(currentSegmentPathWithAny + '/_PARAM', { encoding: 'utf-8', flag: 'r' }).trim() ||
+                storageDriver.pathExists(currentSegmentPathWithAny + '/_PARAM') &&
+                storageDriver.pathRead(currentSegmentPathWithAny + '/_PARAM') ||
                 '@' + paramIndex
             );
             const segmentIndex = (currentRequestContext.mockEntry.path + effectivePath).split('/').length;
@@ -84,12 +80,11 @@ function getDynamicSegmentsHandlers(runtimeConfig, resourceURLWithinPath, curren
         resource: path.normalize(effectivePath + '/' + currentRequestContext.request.method + '.js')
     });
 
-    fs.existsSync(jsFileWithinDynamicPath) ?
+    storageDriver.pathExists(jsFileWithinDynamicPath) ?
         possibleHandlers.push(
             {
-                loader: asNodeModule(jsFileWithinDynamicPath),
                 name: 'dynamicSegmentsJsHandler',
-                file: jsFileWithinDynamicPath,
+                path: jsFileWithinDynamicPath,
                 nature: 'dynamic',
                 pathParams,
                 pathParamsMap
@@ -102,12 +97,11 @@ function getDynamicSegmentsHandlers(runtimeConfig, resourceURLWithinPath, curren
         resource: path.normalize(effectivePath + '/' + currentRequestContext.request.method + '.json')
     });
 
-    fs.existsSync(jsonFileWithinDynamicPath) ?
+    storageDriver.pathExists(jsonFileWithinDynamicPath) ?
         possibleHandlers.push(
             {
-                loader: asStaticFile(jsonFileWithinDynamicPath),
                 name: 'dynamicSegmentsJsonHandler',
-                file: jsonFileWithinDynamicPath,
+                path: jsonFileWithinDynamicPath,
                 nature: 'static',
                 pathParams,
                 pathParamsMap

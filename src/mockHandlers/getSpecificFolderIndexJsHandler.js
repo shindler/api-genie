@@ -1,9 +1,6 @@
-const fs = require('fs');
 const path = require('path');
 
-const chalk = require('chalk').default;
-
-const asNodeModule = require('../mockLoaders/asNodeModule');
+const storageDriver = require('./../mockStorageDrivers/fsDriver');
 
 function getSpecificFolderIndexJsHandler(runtimeConfig, resourceURLPathname, currentRequestContext, includeSubset) {
 
@@ -13,13 +10,12 @@ function getSpecificFolderIndexJsHandler(runtimeConfig, resourceURLPathname, cur
         resource: path.normalize((resourceURLPathname || '.') + '/' + runtimeConfig.mockIndexFilename)
     });
 
-    if (!fs.existsSync(fileLocation)) {
+    if (!storageDriver.pathExists(fileLocation)) {
         return [];
     }
 
     return [{
-        loader: asNodeModule(fileLocation),
-        file: fileLocation,
+        path: fileLocation,
         name: 'specificFolderIndexJsHandler',
         nature: 'dynamic'
     }];

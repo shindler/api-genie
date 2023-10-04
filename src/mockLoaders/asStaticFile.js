@@ -1,8 +1,7 @@
-var fs = require('fs');
-var _ = require('lodash');
-const signalFailure = require('../tryToHandle');
+const storageDriver = require('../mockStorageDrivers/fsDriver');
 
-module.exports = function (location) {
+module.exports = function (path) {
+
     return {
         load: getStaticFileAdapter,
     };
@@ -11,14 +10,14 @@ module.exports = function (location) {
         // return object that complies with handler interface expectations
         return {
             willHandle: () => true,
-            execute: handleUsingStaticFile
+            execute
         };
     }
 
-    function handleUsingStaticFile(mockPath, currentRequestContext, options) {
+    function execute(mockPath, currentRequestContext, options) {
 
         try {
-            const content = fs.readFileSync(location, { encoding: 'utf8', flag: 'r' });
+            const content = storageDriver.pathRead(path);
             const resp = {
                 headers: {
                     'Content-Type': 'application/json',
@@ -28,15 +27,16 @@ module.exports = function (location) {
             };
 
             if (options && options.hasOwnProperty('headers')) {
-                _.assign(resp.headers, options.headers);
+                Object.assign(resp.headers, options.headers);
             }
 
             currentRequestContext.response.writeHead((options && options.hasOwnProperty('statusCode')) ? options.statusCode : 200, resp.headers);
             currentRequestContext.response.end(resp.body);
 
         } catch (e) {
-            signalFailure(currentRequestContext, '404 | Mock file not found');
-            return
+            signalFailure(currentRequestContext, `404 | Mock file not found ${path}`);
+
+            return;
         }
     }
 }

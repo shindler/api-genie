@@ -6,11 +6,11 @@
      */
 module.exports = function checkIfShouldFallbackToGlobals(request, runtimeConfig) {
 
-    var requestHeaders = request.headers,
-        subsetFallbackModeHeader = runtimeConfig.subsetFallbackModeHeader,
+    const requestHeaders = request.headers;
+    const subsetFallbackModeHeader = runtimeConfig.subsetFallbackModeHeader;
 
-        isSubsetForced = !!runtimeConfig.forcedSubset,
-        isFallbackBlockedByHeader = requestHeaders.hasOwnProperty(subsetFallbackModeHeader) && requestHeaders[subsetFallbackModeHeader] === 'false'
+    const isSubsetForced = !!runtimeConfig.forcedSubset;
+    const isFallbackBlockedByHeader = requestHeaders.hasOwnProperty(subsetFallbackModeHeader) && requestHeaders[subsetFallbackModeHeader] === 'false';
 
     if (isSubsetForced) {
         return true;

@@ -1,6 +1,11 @@
 # api-genie
 
-##changelog
+## changelog
+v0.3.0-rc1
+- single file api-genie divided into smaller pieces -> still far from perfect but better than it was
+- refactored behavior of handlers -> now handlers are testing if corresponding file exists before adding them to possible handlers list
+- new handler for dynamic paths with %any and parameters mapping by _PARAM file
+
 v0.2.0
 - api-genie is able to work with connect.js compatible solutions without grunt now
 - standalone loggin introduced

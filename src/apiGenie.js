@@ -14,7 +14,7 @@ module.exports = function apiGenie(userConfig) {
 
     'use strict';
 
-    var runtimeConfig = generateRuntimeConfiguration(defaultConfig, userConfig);
+    const runtimeConfig = generateRuntimeConfiguration(defaultConfig, userConfig);
 
     if (runtimeConfig.beVerbose) {
         console.log(chalk.blue('API Genie has been summoned to existence!'));
